@@ -1,15 +1,18 @@
 package amber.corwin.androidreflect;
 
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.lang.reflect.Parameter;
 
 import amber.corwin.androidreflect.reflect.MethodCall;
 import amber.corwin.androidreflect.reflect.ValueParser;
 import nanohttpd.NanoHTTPD;
 
+import static amber.corwin.androidreflect.reflect.MethodCall_jdk_lt_8.methodSimpleSignature;
 import static nanohttpd.NanoHTTPD.MIME_HTML;
 import static nanohttpd.NanoHTTPD.MIME_PLAINTEXT;
 
@@ -41,9 +44,13 @@ public class ReflectServer {
                 String path = session.getUri();
                 String q = session.getQueryParameterString();
                 if (path.equals("/"))
-                    return methodsPage();
+                    return membersPage();
                 else if (q != null && q.startsWith("call"))
                     return methodCallPage(path, q.substring(4));
+                else if (q != null && q.startsWith("get"))
+                    return fieldGetPage(path, q.substring(3));
+                else if (path.startsWith("/js/"))
+                	return staticResource(path);
                 else
                     return super.serve(session);
             }
@@ -51,6 +58,7 @@ public class ReflectServer {
 
         try {
             httpd.start();
+            log(String.format("server started at http://localhost:%d", httpd.getListeningPort()));
         }
         catch (IOException e) {
             log("server start failed;", e);
@@ -61,60 +69,60 @@ public class ReflectServer {
         httpd.stop();
     }
 
+    protected void log(String msg) {
+    	log(msg, null);
+    }
+    
     protected void log(String msg, Exception error) {
         System.err.println(msg);
         if (error != null) System.err.println(error);
     }
 
-    private NanoHTTPD.Response methodsPage() {
+    private NanoHTTPD.Response membersPage() {
         StringBuilder payload = new StringBuilder();
         for (Method m : root.getMethods()) {
-            String links = (Modifier.isStatic(m.getModifiers())) ?
-                    String.format("<a href=\"%s\">call</a>", methodCallUrl(m)) : "";
+            String links = (Modifier.isStatic(m.getModifiers()) ?
+                    String.format("<a href=\"%s\" data-href=\"%s\">call</a>", methodCallUrl(m), methodCallUrl(m)) : "") +
+            		(m.getParameterCount() > 0 ? "<input />" : "");
             payload.append(String.format("<li>%s %s</li>\n",
                     methodSimpleSignature(m), links));
         }
+        for (Field f : root.getFields()) {
+            String links = (Modifier.isStatic(f.getModifiers())) ?
+                    String.format("<a href=\"%s\">get</a>", fieldGetUrl(f)) : "";
+            payload.append(String.format("<li>%s %s</li>\n",
+                    fieldSimpleSignature(f), links));
+        }
         return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
-                String.format(BASE_TEMPLATE, String.format("<ul>%s</ul>\n", payload.toString())));
+                String.format(BASE_TEMPLATE, String.format("%s<ul>%s</ul>\n", HEAD, payload.toString())));
     }
+    
+    String HEAD = "<script src=\"js/reflect.js\"></script>";
     
     private String methodCallUrl(Method m) {
-    		// "/{name}?call&{param1-type}&{param2-type}&..."
-    		StringBuilder b = new StringBuilder();
-    		b.append("/");
-    		b.append(m.getName());
-    		b.append("?call");
-    		for (Class<?> c : m.getParameterTypes())
-    			b.append("&" + c.getName());
-    		return b.toString();
+		// "/{name}?call&{param1-type}&{param2-type}&..."
+		StringBuilder b = new StringBuilder();
+		b.append("/");
+		b.append(m.getName());
+		b.append("?call");
+		for (Class<?> c : m.getParameterTypes())
+			b.append("&" + c.getName());
+		return b.toString();
     }
     
-    /**
-     * Supposed to produce a succinct, compact representation of the method.
-     * Does not have to be super-precise, emphasis on easy readability.
-     */
-    private String methodSimpleSignature(Method m) {
-    		StringBuilder b = new StringBuilder();
-    		
-    		int mod = m.getModifiers();
-    		if (Modifier.isStatic(mod)) b.append("static ");
-    		b.append(m.getReturnType().getSimpleName() + " ");
-    		b.append(m.getName());
-    		b.append("(");
-    		boolean first = true;
-    		for (Parameter p : m.getParameters()) {
-    			if (first) first = false; else b.append(", ");
-    			b.append(p.getType().getSimpleName() + " " + p.getName());
-    		}
-    		b.append(")");
-    		
-    		return b.toString();
+    private String fieldGetUrl(Field f) {
+    	// "/{name}?get"
+    	return "/" + f.getName() + "?get";
     }
-
+    
+    private String fieldSimpleSignature(Field f) {
+    	return f.getType().toGenericString() + " " + f.getName();
+    }
+    
     private NanoHTTPD.Response methodCallPage(String path, String queryString) {
-    		// Remove leading "&" from query string
-    		path = removeLeading(path, "/");
-    		queryString = removeLeading(queryString, "&");
+		// Remove leading "&" from query string
+		path = removeLeading(path, "/");
+		queryString = removeLeading(queryString, "&");
 
         // Parse method call
         MethodCall q = MethodCall.fromStrings(path, queryString);
@@ -124,7 +132,7 @@ public class ReflectServer {
             Object err = null;
             
             try {
-            		ret = method.invoke(null, q.argumentActualValues(parser));
+            	ret = method.invoke(null, q.argumentActualValues(parser));
             }
             catch (InvocationTargetException e) { err = e.getCause(); }
             catch (Exception e) { err = e; }
@@ -142,9 +150,47 @@ public class ReflectServer {
         }
     }
     
+    private NanoHTTPD.Response fieldGetPage(String path, String queryString) {
+    	path = removeLeading(path, "/");
+    	
+    	try {
+    		Field field = root.getField(path);
+            Object ret = null;
+            Object err = null;
+    		
+    		try {
+    			ret = field.get(null);
+    		}
+    		catch (Exception e) { err = e; }
+    		
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
+                    String.format(BASE_TEMPLATE, field.toGenericString() + (err == null ? " = " + ret : " !! " + err)));
+    	}
+    	catch (NoSuchFieldException e) {
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+            		"Field not found: " + path);
+    	}
+    }
+    
+    private static final String STATIC_ROOT_JS = "app/src/main/js";
+    
+    private NanoHTTPD.Response staticResource(String path) {
+    	try {
+	    	if (path.startsWith("/js/"))
+	    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK,
+	    				"text/javascript",
+	    				new FileInputStream(STATIC_ROOT_JS + path.substring(3)));
+	    	else
+	    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, "", "");
+    	}
+    	catch (FileNotFoundException e) {
+    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, "", "");
+    	}
+    }
+    
     private static String removeLeading(String s, String prefix) {
-    		while (s.startsWith(prefix)) s = s.substring(prefix.length());
-    		return s;
+		while (s.startsWith(prefix)) s = s.substring(prefix.length());
+		return s;
     }
 
     // -----------
