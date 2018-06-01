@@ -7,9 +7,12 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.UUID;
 
 import amber.corwin.androidreflect.reflect.MethodCall;
+import amber.corwin.androidreflect.reflect.ObjectStore;
 import amber.corwin.androidreflect.reflect.ValueParser;
+import amber.corwin.androidreflect.reflect.ValueParser.ValueFormatError;
 import nanohttpd.NanoHTTPD;
 
 import static amber.corwin.androidreflect.reflect.MethodCall_jdk_lt_8.methodSimpleSignature;
@@ -43,8 +46,10 @@ public class ReflectServer {
             public Response serve(IHTTPSession session) {
                 String path = session.getUri();
                 String q = session.getQueryParameterString();
-                if (path.equals("/"))
-                    return membersPage();
+                if (path == "/")
+                	return membersPage(root, q);
+                else if (path.matches("/[^/]*/?"))
+                    return membersPage(path, q);
                 else if (q != null && q.startsWith("call"))
                     return methodCallPage(path, q.substring(4));
                 else if (q != null && q.startsWith("get"))
@@ -78,11 +83,30 @@ public class ReflectServer {
         if (error != null) System.err.println(error);
     }
 
-    private NanoHTTPD.Response membersPage() {
+    // ----------
+    // Pages Part
+    // ----------
+    
+    String HEAD = "<script src=\"/js/reflect.js\"></script>";
+    
+    private NanoHTTPD.Response membersPage(String path, String thisRef) {
+    	path = removeLeading(path, "/");
+    	path = removeTrailing(path, "/");
+    	try {
+    		return membersPage(ValueParser.typeForName(path), thisRef);
+    	}
+    	catch (ClassNotFoundException e) {
+    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+    				e.toString());
+    	}
+    }
+    
+    private NanoHTTPD.Response membersPage(Class<?> root, String thisRef) {
         StringBuilder payload = new StringBuilder();
         for (Method m : root.getMethods()) {
-            String links = (Modifier.isStatic(m.getModifiers()) ?
-                    String.format("<a href=\"%s\" data-href=\"%s\">call</a>", methodCallUrl(m), methodCallUrl(m)) : "") +
+            String links = 
+                    String.format("<a href=\"%s\" data-href=\"%s\">call</a>", methodCallUrl(m), methodCallUrl(m)) +
+                    (Modifier.isStatic(m.getModifiers()) ? "" : String.format("<input value=\"%s\"/>", (thisRef == null ? "" : thisRef))) +
             		(m.getParameterCount() > 0 ? "<input />" : "");
             payload.append(String.format("<li>%s %s</li>\n",
                     methodSimpleSignature(m), links));
@@ -97,22 +121,24 @@ public class ReflectServer {
                 String.format(BASE_TEMPLATE, String.format("%s<ul>%s</ul>\n", HEAD, payload.toString())));
     }
     
-    String HEAD = "<script src=\"js/reflect.js\"></script>";
-    
     private String methodCallUrl(Method m) {
-		// "/{name}?call&{param1-type}&{param2-type}&..."
+		// "/{class}/{name}?call&{param1-type}&{param2-type}&..."
 		StringBuilder b = new StringBuilder();
+		b.append("/");
+		b.append(m.getDeclaringClass().getName());
 		b.append("/");
 		b.append(m.getName());
 		b.append("?call");
+		if (!Modifier.isStatic(m.getModifiers()))
+		    b.append("&this");
 		for (Class<?> c : m.getParameterTypes())
 			b.append("&" + c.getName());
 		return b.toString();
     }
     
     private String fieldGetUrl(Field f) {
-    	// "/{name}?get"
-    	return "/" + f.getName() + "?get";
+    	// "/{class}/{name}?get"
+    	return "/" + f.getDeclaringClass().getName() + "/" + f.getName() + "?get";
     }
     
     private String fieldSimpleSignature(Field f) {
@@ -125,47 +151,84 @@ public class ReflectServer {
 		queryString = removeLeading(queryString, "&");
 
         // Parse method call
-        MethodCall q = MethodCall.fromStrings(path, queryString);
-        try {
-            Method method = root.getMethod(q.name, q.parameterClasses());
-            Object ret = null;
-            Object err = null;
-            
-            try {
-            	ret = method.invoke(null, q.argumentActualValues(parser));
-            }
-            catch (InvocationTargetException e) { err = e.getCause(); }
-            catch (Exception e) { err = e; }
-            
-            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
-                    String.format(BASE_TEMPLATE, method.toGenericString() + (err == null ? " = " + ret : " !! " + err)));
-        }
-        catch (NoSuchMethodException e) {
-            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
-            		"Method not found: " + q.name);
-        }
+		try {
+	        MethodCall q = MethodCall.fromStrings(path, queryString);
+	        Class<?> root = q.class_();
+	        
+	        try {
+	            Method method = root.getMethod(q.name, q.parameterClasses());
+	            Object ret = null;
+	            Object err = null;
+	            UUID uuid = null;
+	            
+	            try {
+	            	ret = method.invoke(q.thisArgActual(parser), q.argumentActualValues(parser));
+	            	if (ret != null)
+	            	    uuid = store.add(ret);
+	            }
+	            catch (InvocationTargetException e) { err = e.getCause(); }
+	            catch (Exception e) { err = e; }
+	            
+	            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
+	                    String.format(BASE_TEMPLATE,  
+	                    		String.format("<p>%s</p>", method.toGenericString() +
+	                    			                       (err == null ? " = " + ret : " !! " + err)) +
+	                    		String.format("<p>%s</p>", uuid == null ? "" : "[" + uuid + "]")));
+	        }
+	        catch (NoSuchMethodException e) {
+	            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+	            		"Method not found: " + q.name);
+	        }
+	        catch (ClassNotFoundException e) {
+	            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+	            		"Unknown parameter type: " + e.toString());
+	        }
+		}
+		catch (ValueFormatError e) {
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.BAD_REQUEST, MIME_PLAINTEXT,
+            		"Invalid method specification: " + path + "?" + queryString);
+		}
         catch (ClassNotFoundException e) {
             return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
-            		"Unknown parameter type: " + e.toString());
+                    "Unknown class: " + e.toString());
         }
     }
     
     private NanoHTTPD.Response fieldGetPage(String path, String queryString) {
     	path = removeLeading(path, "/");
     	
+    	String[] split = path.split("/", 2);
+    	
     	try {
-    		Field field = root.getField(path);
+    	    Class<?> root = ValueParser.typeForName(split[0]);
+    		Field field = root.getField(split[1]);
+    		Object obj = queryString != null && queryString.length() != 0 ?
+    		        parser.parseReference(queryString, split[0]) : null;
+    		
             Object ret = null;
             Object err = null;
-    		
+            UUID uuid = null;
+
     		try {
-    			ret = field.get(null);
+    			ret = field.get(obj);
+    			if (ret != null)
+    			    uuid = store.add(ret);
     		}
     		catch (Exception e) { err = e; }
     		
             return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
-                    String.format(BASE_TEMPLATE, field.toGenericString() + (err == null ? " = " + ret : " !! " + err)));
+                    String.format(BASE_TEMPLATE, 
+                            String.format("<p>%s</p>", field.toGenericString() + (err == null ? " = " + ret : " !! " + err))) + 
+                            String.format("<p>%s</p>", uuid == null ? "" : "[" + uuid + "]"));
     	}
+        catch (ValueFormatError e) {
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.BAD_REQUEST, MIME_PLAINTEXT,
+                    "Invalid object reference: " + queryString);
+        }
+        catch (ClassNotFoundException e) {
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+                    "Unknown class: " + e.toString());
+        }
     	catch (NoSuchFieldException e) {
             return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
             		"Field not found: " + path);
@@ -192,11 +255,21 @@ public class ReflectServer {
 		while (s.startsWith(prefix)) s = s.substring(prefix.length());
 		return s;
     }
+    
+    private static String removeTrailing(String s, String suffix) {
+    	while (s.endsWith(suffix)) s = s.substring(0, s.length() - suffix.length());
+    	return s;
+    }
 
+    // ----------------
+    // ObjectStore Part
+    // ----------------
+    private ObjectStore store = new ObjectStore();
+    
     // -----------
     // Parser Part
     // -----------
-    static ValueParser parser = new ValueParser();
+    private ValueParser parser = new ValueParser(store);
 	
 	
     public static void main(String[] args) {
