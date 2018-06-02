@@ -102,11 +102,12 @@ public class ReflectServer {
     }
     
     private NanoHTTPD.Response membersPage(Class<?> root, String thisRef) {
+        String header = String.format("<input class=\"this-ref\" value=\"%s\"/>", thisRef == null ? "" : thisRef);
         StringBuilder payload = new StringBuilder();
         for (Method m : root.getMethods()) {
             String links = 
-                    String.format("<a href=\"%s\" data-href=\"%s\">call</a>", methodCallUrl(m), methodCallUrl(m)) +
-                    (Modifier.isStatic(m.getModifiers()) ? "" : String.format("<input value=\"%s\"/>", (thisRef == null ? "" : thisRef))) +
+                    String.format("<a href=\"%s\" data-href=\"%s\">call</a>", methodCallUrl(m, thisRef), methodCallUrl(m)) +
+                    (Modifier.isStatic(m.getModifiers()) ? "" : String.format("<input class=\"this-arg\" value=\"%s\"/>", (thisRef == null ? "" : thisRef))) +
             		(m.getParameterCount() > 0 ? "<input />" : "");
             payload.append(String.format("<li>%s %s</li>\n",
                     methodSimpleSignature(m), links));
@@ -118,10 +119,14 @@ public class ReflectServer {
                     fieldSimpleSignature(f), links));
         }
         return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
-                String.format(BASE_TEMPLATE, String.format("%s<ul>%s</ul>\n", HEAD, payload.toString())));
+                String.format(BASE_TEMPLATE, String.format("%s\n%s\n<ul>%s</ul>\n", HEAD, header, payload.toString())));
     }
     
     private String methodCallUrl(Method m) {
+        return methodCallUrl(m, null);
+    }
+    
+    private String methodCallUrl(Method m, String thisRef) {
 		// "/{class}/{name}?call&{param1-type}&{param2-type}&..."
 		StringBuilder b = new StringBuilder();
 		b.append("/");
@@ -129,8 +134,10 @@ public class ReflectServer {
 		b.append("/");
 		b.append(m.getName());
 		b.append("?call");
-		if (!Modifier.isStatic(m.getModifiers()))
+		if (!Modifier.isStatic(m.getModifiers())) {
 		    b.append("&this");
+		    if (thisRef != null) b.append("=" + thisRef);
+		}
 		for (Class<?> c : m.getParameterTypes())
 			b.append("&" + c.getName());
 		return b.toString();
@@ -141,8 +148,21 @@ public class ReflectServer {
     	return "/" + f.getDeclaringClass().getName() + "/" + f.getName() + "?get";
     }
     
+    private String objectRefUrl(UUID ref, String className) {
+        // "/{class}?[{uuid}]
+        return "/" + className + "?[" + ref + "]";
+    }
+    
     private String fieldSimpleSignature(Field f) {
     	return f.getType().toGenericString() + " " + f.getName();
+    }
+    
+    private String objectRefLink(UUID ref, String className) {
+        return String.format("<a href=\"%s\">[%s]</a>", objectRefUrl(ref, className), ref);
+    }
+    
+    private String objectRefLink(UUID ref, Class<?> type) {
+        return objectRefLink(ref, type.getName());
     }
     
     private NanoHTTPD.Response methodCallPage(String path, String queryString) {
@@ -173,7 +193,7 @@ public class ReflectServer {
 	                    String.format(BASE_TEMPLATE,  
 	                    		String.format("<p>%s</p>", method.toGenericString() +
 	                    			                       (err == null ? " = " + ret : " !! " + err)) +
-	                    		String.format("<p>%s</p>", uuid == null ? "" : "[" + uuid + "]")));
+	                    		String.format("<p>%s</p>", uuid == null ? "" : objectRefLink(uuid, ret.getClass()))));
 	        }
 	        catch (NoSuchMethodException e) {
 	            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
@@ -219,7 +239,7 @@ public class ReflectServer {
             return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
                     String.format(BASE_TEMPLATE, 
                             String.format("<p>%s</p>", field.toGenericString() + (err == null ? " = " + ret : " !! " + err))) + 
-                            String.format("<p>%s</p>", uuid == null ? "" : "[" + uuid + "]"));
+                            String.format("<p>%s</p>", uuid == null ? "" : objectRefLink(uuid, ret.getClass())));
     	}
         catch (ValueFormatError e) {
             return new NanoHTTPD.Response(NanoHTTPD.Response.Status.BAD_REQUEST, MIME_PLAINTEXT,

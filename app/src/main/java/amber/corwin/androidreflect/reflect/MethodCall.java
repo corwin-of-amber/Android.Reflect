@@ -37,7 +37,7 @@ public class MethodCall {
             for (String pa : Arrays.asList(params.split("&"))) {
             	String[] splt = pa.split("=", 2);
             	if (splt[0].equals("this"))
-            	    q.thisArg = splt[1];
+            	    q.thisArg = splt.length > 1 ? splt[1] : null;
             	else {
             		q.parameterTypes.add(splt[0]);
             		q.argumentValues.add(splt.length > 1 ? splt[1] : null);
