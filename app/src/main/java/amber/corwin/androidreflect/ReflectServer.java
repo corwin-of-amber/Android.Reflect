@@ -108,7 +108,7 @@ public class ReflectServer {
             String links = 
                     String.format("<a href=\"%s\" data-href=\"%s\">call</a>", methodCallUrl(m, thisRef), methodCallUrl(m)) +
                     (Modifier.isStatic(m.getModifiers()) ? "" : String.format("<input class=\"this-arg\" value=\"%s\"/>", (thisRef == null ? "" : thisRef))) +
-            		(m.getParameterCount() > 0 ? "<input />" : "");
+            		(m.getParameterTypes().length > 0 ? "<input />" : "");
             payload.append(String.format("<li>%s %s</li>\n",
                     methodSimpleSignature(m), links));
         }
@@ -154,7 +154,8 @@ public class ReflectServer {
     }
     
     private String fieldSimpleSignature(Field f) {
-    	return f.getType().toGenericString() + " " + f.getName();
+        // TODO toGenericString if JDK supports
+    	return f.getType().toString() + " " + f.getName();
     }
     
     private String objectRefLink(UUID ref, String className) {

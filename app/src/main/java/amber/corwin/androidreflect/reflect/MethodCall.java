@@ -69,7 +69,7 @@ public class MethodCall {
 	}
 	
 	public Object thisArgActual(ValueParser parser) throws ValueParser.ValueFormatError {
-	    return parser.parseReference(thisArg, className);
+	    return thisArg == null ? null : parser.parseReference(thisArg, className);
 	}
     
 }
