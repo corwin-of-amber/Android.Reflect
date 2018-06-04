@@ -2,16 +2,5 @@
 <classpath>
 	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
 	<classpathentry excluding="amber/corwin/androidreflect/MainActivity.java" kind="src" path="app/src/main/java"/>
-	<classpathentry kind="lib" path="app/build/generated/mockable-android-23.v3.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/incremental-classes/debug/instant-run-bootstrap.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/incremental-runtime-classes/debug/instant-run.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/transforms/dexBuilder/debug/11.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/transforms/dexBuilder/debug/12.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/transforms/mergeJavaRes/debug/0.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/transforms/mergeJavaRes/release/0.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/transforms/preDex/release/0.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/transforms/preDex/release/1.jar"/>
-	<classpathentry kind="lib" path="app/build/intermediates/transforms/preDex/release/2.jar"/>
-	<classpathentry kind="lib" path="gradle/wrapper/gradle-wrapper.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
