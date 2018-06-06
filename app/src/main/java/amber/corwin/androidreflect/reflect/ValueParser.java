@@ -26,13 +26,27 @@ public class ValueParser {
     	if (store == null)
     		throw new NoSuchElementException("store uninitialized");
     	else if (ref.startsWith("[")) {
-    		Object obj = store.get(UUID.fromString(ref.substring(1, ref.length() - 1)));
+    		Object obj = store.get(parseUUID(ref));
     		if (obj == null) throw new NoSuchElementException("undefined or expired " + ref);
     		return obj;
+    	}
+    	else if (ref.startsWith("$")) {
+            Object obj = store.get(ref);
+            if (obj == null) throw new NoSuchElementException("undefined or expired " + ref);
+            return obj;
     	}
 		else
 			throw new ValueFormatError();
 	}
+    
+    public UUID parseUUID(String ref) throws ValueFormatError {
+        try {
+            return UUID.fromString(ref.substring(1, ref.length() - 1));
+        }
+        catch (IllegalArgumentException e) {
+            throw new ValueFormatError();
+        }
+    }
 	
     /**
      * Looks for a class, including primitives.

@@ -33,8 +33,18 @@ public class ObjectStore {
 		return (e == null) ? null : e.obj;
 	}
 	
-	public void persist(UUID uuid, String name) {
-		persistentObjects.put(name, get(uuid));
+	public void persist(UUID uuid, String name) throws NoSuchObjectException {
+	    Object obj = get(uuid);
+	    if (obj == null) throw new NoSuchObjectException();
+		persistentObjects.put(name, obj);
+	}
+	
+	public String persist(UUID uuid) throws NoSuchObjectException {
+	    int i = 0;
+	    String name;
+	    while (persistentObjects.containsKey(name = "$" + i)) i++;
+	    persist(uuid, name);
+	    return name;
 	}
 	
 	public Object get(String name) {
@@ -51,4 +61,7 @@ public class ObjectStore {
 			if (e.timestamp + TRANSIENT_LIFE_SPAN < now) ei.remove();
 		}
 	}
+	
+	@SuppressWarnings("serial")
+    public class NoSuchObjectException extends Exception {}
 }

@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import amber.corwin.androidreflect.reflect.MethodCall;
 import amber.corwin.androidreflect.reflect.ObjectStore;
+import amber.corwin.androidreflect.reflect.ObjectStore.NoSuchObjectException;
 import amber.corwin.androidreflect.reflect.ValueParser;
 import amber.corwin.androidreflect.reflect.ValueParser.ValueFormatError;
 import nanohttpd.NanoHTTPD;
@@ -46,14 +47,20 @@ public class ReflectServer {
             public Response serve(IHTTPSession session) {
                 String path = session.getUri();
                 String q = session.getQueryParameterString();
-                if (path == "/")
-                	return membersPage(root, q);
-                else if (path.matches("/[^/]*/?"))
-                    return membersPage(path, q);
+                if (path.equals("/")) {
+                	//return membersPage(root, q);
+                    NanoHTTPD.Response r = new NanoHTTPD.Response(NanoHTTPD.Response.Status.REDIRECT, MIME_PLAINTEXT, "");
+                    r.addHeader("Location", "/" + root.getName());
+                    return r;
+                }
                 else if (q != null && q.startsWith("call"))
                     return methodCallPage(path, q.substring(4));
                 else if (q != null && q.startsWith("get"))
                     return fieldGetPage(path, q.substring(3));
+                else if (path.startsWith("/[") && q != null && q.startsWith("persist"))
+                    return persistAndRedirect(path);
+                else if (path.matches("/[^/]*/?"))
+                    return membersPage(path, q);
                 else if (path.startsWith("/js/"))
                 	return staticResource(path);
                 else
@@ -102,7 +109,8 @@ public class ReflectServer {
     }
     
     private NanoHTTPD.Response membersPage(Class<?> root, String thisRef) {
-        String header = String.format("<input class=\"this-ref\" value=\"%s\"/>", thisRef == null ? "" : thisRef);
+        String header = String.format("<input class=\"this-ref\" value=\"%s\"/>", thisRef == null ? "" : thisRef) +
+                (thisRef == null ? "" : String.format("<a href=\"/%s?persist\">persist</a>", thisRef));
         StringBuilder payload = new StringBuilder();
         for (Method m : root.getMethods()) {
             String links = 
@@ -151,6 +159,11 @@ public class ReflectServer {
     private String objectRefUrl(UUID ref, String className) {
         // "/{class}?[{uuid}]
         return "/" + className + "?[" + ref + "]";
+    }
+    
+    private String objectRefUrl(String persistentName, String className) {
+        // "/{class}?{name}
+        return "/" + className + "?" + persistentName;
     }
     
     private String fieldSimpleSignature(Field f) {
@@ -254,6 +267,32 @@ public class ReflectServer {
             return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
             		"Field not found: " + path);
     	}
+    }
+    
+    private NanoHTTPD.Response persistAndRedirect(String path) {
+        path = removeLeading(path, "/");
+        try {
+            UUID uuid = parser.parseUUID(path);
+            String name = store.persist(uuid);
+            
+            return redirectTo(objectRefUrl(name, store.get(uuid).getClass().getName()));
+        }
+        catch (ValueFormatError e) {
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.BAD_REQUEST, MIME_PLAINTEXT,
+                    "Invalid object reference: " + path);
+        }
+        catch (NoSuchObjectException e) {
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+                    "Object not found: " + path);
+        }
+    }
+    
+    private NanoHTTPD.Response redirectTo(String url) {
+        NanoHTTPD.Response r = 
+                new NanoHTTPD.Response(NanoHTTPD.Response.Status.REDIRECT,
+                        MIME_PLAINTEXT, "");
+        r.addHeader("Location", url);
+        return r;
     }
     
     private static final String STATIC_ROOT_JS = "app/src/main/js";
