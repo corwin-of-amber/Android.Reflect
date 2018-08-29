@@ -3,10 +3,13 @@ package amber.corwin.androidreflect;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.UUID;
 
 import amber.corwin.androidreflect.reflect.MethodCall;
@@ -14,6 +17,7 @@ import amber.corwin.androidreflect.reflect.ObjectStore;
 import amber.corwin.androidreflect.reflect.ObjectStore.NoSuchObjectException;
 import amber.corwin.androidreflect.reflect.ValueParser;
 import amber.corwin.androidreflect.reflect.ValueParser.ValueFormatError;
+import amber.corwin.androidreflect.reflect.ValueRender;
 import nanohttpd.NanoHTTPD;
 
 import static amber.corwin.androidreflect.reflect.MethodCall_jdk_lt_8.methodSimpleSignature;
@@ -59,6 +63,8 @@ public class ReflectServer {
                     return fieldGetPage(path, q.substring(3));
                 else if (path.startsWith("/[") && q != null && q.startsWith("persist"))
                     return persistAndRedirect(path);
+                else if (path.startsWith("/$"))
+                    return lookupAndRedirect(path);
                 else if (path.matches("/[^/]*/?"))
                     return membersPage(path, q);
                 else if (path.startsWith("/js/"))
@@ -202,11 +208,11 @@ public class ReflectServer {
 	            }
 	            catch (InvocationTargetException e) { err = e.getCause(); }
 	            catch (Exception e) { err = e; }
-	            
+
 	            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
 	                    String.format(BASE_TEMPLATE,  
 	                    		String.format("<p>%s</p>", method.toGenericString() +
-	                    			                       (err == null ? " = " + ret : " !! " + err)) +
+	                    			                       (err == null ? " = " + formatHtml(ret) : " !! " + formatHtml(err))) +
 	                    		String.format("<p>%s</p>", uuid == null ? "" : objectRefLink(uuid, ret.getClass()))));
 	        }
 	        catch (NoSuchMethodException e) {
@@ -286,7 +292,19 @@ public class ReflectServer {
                     "Object not found: " + path);
         }
     }
-    
+
+    private NanoHTTPD.Response lookupAndRedirect(String path) {
+        path = removeLeading(path, "/");
+
+        Object o = store.get(path);
+        if (o == null) {
+            return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+                    "Object not found: " + path);
+        }
+
+        return redirectTo(objectRefUrl(path, o.getClass().getName()));
+    }
+
     private NanoHTTPD.Response redirectTo(String url) {
         NanoHTTPD.Response r = 
                 new NanoHTTPD.Response(NanoHTTPD.Response.Status.REDIRECT,
@@ -295,20 +313,37 @@ public class ReflectServer {
         return r;
     }
     
-    private static final String STATIC_ROOT_JS = "app/src/main/js";
-    
+    private static final String STATIC_ROOT_JS = "app/src/main/res/raw";
+
+    public interface StaticResourceProvider {
+        InputStream open(String path);
+    }
+
+    private List<StaticResourceProvider> staticResourceAdditional = new LinkedList<>();
+
     private NanoHTTPD.Response staticResource(String path) {
+        InputStream resourceStream = null;
     	try {
-	    	if (path.startsWith("/js/"))
+    	    for (StaticResourceProvider srp : staticResourceAdditional) {
+    	        resourceStream = srp.open(path);
+    	        if (resourceStream != null) break;
+            }
+            if (resourceStream == null && path.startsWith("/js/"))
+                resourceStream = new FileInputStream(STATIC_ROOT_JS + path.substring(3));
+
+    	    if (resourceStream != null)
 	    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK,
-	    				"text/javascript",
-	    				new FileInputStream(STATIC_ROOT_JS + path.substring(3)));
+	    				"text/javascript", resourceStream);
 	    	else
 	    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, "", "");
     	}
     	catch (FileNotFoundException e) {
-    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, "", "");
+    		return new NanoHTTPD.Response(NanoHTTPD.Response.Status.NOT_FOUND, "", "" + e);
     	}
+    }
+
+    public void registerStaticResources(StaticResourceProvider srp) {
+        staticResourceAdditional.add(srp);
     }
     
     private static String removeLeading(String s, String prefix) {
@@ -325,12 +360,25 @@ public class ReflectServer {
     // ObjectStore Part
     // ----------------
     private ObjectStore store = new ObjectStore();
-    
+
+    public ObjectStore getObjectStore() {
+        return store;
+    }
+
     // -----------
     // Parser Part
     // -----------
     private ValueParser parser = new ValueParser(store);
-	
+
+    // -----------
+    // Render Part
+    // -----------
+    private ValueRender render = new ValueRender();
+
+    private String formatHtml(Object o) {
+        return render.renderObject(o);
+    }
+
 	
     public static void main(String[] args) {
         ReflectServer s = new ReflectServer(System.class);

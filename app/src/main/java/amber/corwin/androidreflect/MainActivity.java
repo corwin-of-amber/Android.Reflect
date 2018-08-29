@@ -12,6 +12,7 @@ import android.widget.SimpleAdapter;
 import android.widget.Toast;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -19,6 +20,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import amber.corwin.androidreflect.reflect.ObjectStore;
 import nanohttpd.NanoHTTPD;
 
 import static amber.corwin.androidreflect.reflect.MethodCall_jdk_lt_8.methodSimpleSignature;
@@ -43,6 +45,23 @@ public class MainActivity extends Activity {
                 Log.e("Reflect.Server", msg, error);
             }
         };
+
+        // Since application files are unavailable, register a resource provider
+        server.registerStaticResources(new ReflectServer.StaticResourceProvider() {
+            @Override
+            public InputStream open(String path) {
+                if (path.equals("/js/reflect.js")) return getResources().openRawResource(R.raw.reflect);
+                else return null;
+            }
+        });
+
+        // Make Activity instance available
+        ObjectStore store = server.getObjectStore();
+        try {
+            store.persist(store.add(this), "$0");
+        }
+        catch (ObjectStore.NoSuchObjectException e) { assert(false); }
+
         server.start();
     }
 
