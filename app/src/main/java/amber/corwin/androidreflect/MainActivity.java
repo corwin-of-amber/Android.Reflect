@@ -19,6 +19,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Semaphore;
 
 import amber.corwin.androidreflect.reflect.ObjectStore;
 import nanohttpd.NanoHTTPD;
@@ -55,6 +57,36 @@ public class MainActivity extends Activity {
             }
         });
 
+        server.setWorker(new ReflectServer.Worker() {
+
+            @Override
+            public <V> V delegate(Callable<V> code) throws Exception {
+                final Semaphore s = new Semaphore(0);
+
+                final Box<V> box = new Box<>();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            box.ret = code.call();
+                        }
+                        catch (Exception e) { box.err = e; }
+                        finally { s.release(); }
+                    }
+                });
+
+                while (true) {
+                    try {
+                        s.acquire();
+                    }
+                    catch (InterruptedException e) { continue; }
+                    if (box.err != null) throw box.err;
+                    else return box.ret;
+                }
+            }
+        });
+
         // Make Activity instance available
         ObjectStore store = server.getObjectStore();
         try {
@@ -63,6 +95,11 @@ public class MainActivity extends Activity {
         catch (ObjectStore.NoSuchObjectException e) { assert(false); }
 
         server.start();
+    }
+
+    static class Box<V> {
+        Exception err = null;
+        V ret = null;
     }
 
     public void loadMethods() {

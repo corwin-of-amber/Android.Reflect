@@ -11,6 +11,7 @@ import java.lang.reflect.Modifier;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 
 import amber.corwin.androidreflect.reflect.MethodCall;
 import amber.corwin.androidreflect.reflect.ObjectStore;
@@ -122,7 +123,7 @@ public class ReflectServer {
             String links = 
                     String.format("<a href=\"%s\" data-href=\"%s\">call</a>", methodCallUrl(m, thisRef), methodCallUrl(m)) +
                     (Modifier.isStatic(m.getModifiers()) ? "" : String.format("<input class=\"this-arg\" value=\"%s\"/>", (thisRef == null ? "" : thisRef))) +
-            		(m.getParameterTypes().length > 0 ? "<input />" : "");
+            		repeatString("<input /> ", m.getParameterTypes().length);
             payload.append(String.format("<li>%s %s</li>\n",
                     methodSimpleSignature(m), links));
         }
@@ -135,7 +136,13 @@ public class ReflectServer {
         return new NanoHTTPD.Response(NanoHTTPD.Response.Status.OK, MIME_HTML,
                 String.format(BASE_TEMPLATE, String.format("%s\n%s\n<ul>%s</ul>\n", HEAD, header, payload.toString())));
     }
-    
+
+    private String repeatString(String s, int times) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < times; i++) b.append(s);
+        return b.toString();
+    }
+
     private String methodCallUrl(Method m) {
         return methodCallUrl(m, null);
     }
@@ -202,7 +209,8 @@ public class ReflectServer {
 	            UUID uuid = null;
 	            
 	            try {
-	            	ret = method.invoke(q.thisArgActual(parser), q.argumentActualValues(parser));
+	                ret = worker.delegate(() ->
+                            method.invoke(q.thisArgActual(parser), q.argumentActualValues(parser)));
 	            	if (ret != null)
 	            	    uuid = store.add(ret);
 	            }
@@ -364,6 +372,18 @@ public class ReflectServer {
     public ObjectStore getObjectStore() {
         return store;
     }
+
+    // -----------
+    // Worker Part
+    // -----------
+    interface Worker {
+        <V> V delegate(Callable<V> callable) throws Exception;
+    }
+    private Worker worker = new Worker() {
+        public <V> V delegate(Callable<V> callable) throws Exception { return callable.call(); }
+    };
+
+    public void setWorker(Worker worker) { this.worker = worker; }
 
     // -----------
     // Parser Part

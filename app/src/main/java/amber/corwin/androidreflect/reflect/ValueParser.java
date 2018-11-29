@@ -16,7 +16,7 @@ public class ValueParser {
     public Object parseValue(String text, String type) throws ValueFormatError {
 		if (type.equals("int"))
 			return Integer.parseInt(text);
-		else if (type.equals("java.lang.String"))
+		else if (type.equals("java.lang.String") || type.equals("java.lang.CharSequence"))
 			return text;
 		else
 			return parseReference(text, type);
